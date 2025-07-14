@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+venv/
+.envrc
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+*.iml
+*.log
+*.tmp
+*.swp
+*.swo
+*.bak
+*.idea/
+*.project
+*.classpath
+*.settings/
+target/
+
+# Maven
+.mvn/
+
+# Node
+node_modules/
+
+# Docker
+*.pid
+docker-compose.override.yml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data
+*.sqlite
+*.db
+*.csv
+*.tsv
+*.xls
+*.xlsx
+# *.json
+# !data/news_data.json
+
+# Misc
+*.log
+*.out
+*.err
+*.pid
+
+# VS Code
+.vscode/
+
+# Others
+# postgres-init/*.sql
