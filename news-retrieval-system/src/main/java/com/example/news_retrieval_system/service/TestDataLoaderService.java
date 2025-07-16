@@ -27,15 +27,17 @@ public class TestDataLoaderService {
     @Autowired
     private KafkaTemplate<String, UserEvent> kafkaTemplate;
 
-    private final Random random = new Random();
+    @Autowired
+    private RedisService redisService;
 
+    private final Random random = new Random();
     private LocalDateTime lastGeneratedTime;
-    
+
     public void loadTestData() throws InterruptedException {
         try {
             lastGeneratedTime = LocalDateTime.now();
-            // Fetch existing articles from the database
             List<NewsArticle> articles = newsArticleRepository.findAll();
+            
             if (articles.isEmpty()) {
                 logger.warn("No articles found in the database. Loading sample articles...");
                 articles = createSampleArticles();
@@ -47,21 +49,14 @@ public class TestDataLoaderService {
             
             
             articles.forEach(article -> 
-                logger.info("Using article: id={}, title={}, location=[{}, {}]", 
-                    article.getId(), article.getTitle(), article.getLatitude(), article.getLongitude())
+                logger.debug("Article loaded: id={}, title={}", article.getId(), article.getTitle())
             );
 
-        
             generateUserEvents(articles);
-            int totalEventsGenerated = articles.size() * (20 + random.nextInt(30));
-            logger.info("Generated {} user events for trending news testing. Waiting for processing to complete...", totalEventsGenerated);
-            
-            
-            Thread.sleep(2000);
-            logger.info("Test data generation completed. You can now use the /api/v1/test-data/status endpoint to check the results.");
-            
-            // Verify the data in Redis
+            Thread.sleep(1000); // Wait for events to be processed
             verifyRedisData(articles);
+            
+            logger.info("Test data generation completed successfully");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             logger.error("Test data generation was interrupted", e);
@@ -72,12 +67,8 @@ public class TestDataLoaderService {
         }
     }
 
-    @Autowired
-    private RedisService redisService;
-
     private void verifyRedisData(List<NewsArticle> articles) {
-        // Create a map of city names to their locations for verification
-        String[][] cityChecks = {
+        String[][] cityLocations = {
             {"Mumbai", "19.075983", "72.877655"},
             {"Delhi", "28.613939", "77.209021"},
             {"Chennai", "13.082680", "80.270718"},
@@ -87,10 +78,10 @@ public class TestDataLoaderService {
         };
 
         boolean foundAnyTrending = false;
-        for (String[] cityCheck : cityChecks) {
-            String cityName = cityCheck[0];
-            double lat = Double.parseDouble(cityCheck[1]);
-            double lon = Double.parseDouble(cityCheck[2]);
+        for (String[] city : cityLocations) {
+            String cityName = city[0];
+            double lat = Double.parseDouble(city[1]);
+            double lon = Double.parseDouble(city[2]);
             
             String geoHash = RedisService.geohash(lat, lon, 5);
             List<String> trending = redisService.getTrendingArticles(geoHash, 10);
@@ -100,7 +91,6 @@ public class TestDataLoaderService {
                 logger.info("Found {} trending articles in {} area (geohash: {})", 
                     trending.size(), cityName, geoHash);
                 
-                // Log the IDs and verify they match our articles
                 trending.forEach(articleId -> {
                     boolean matched = articles.stream()
                         .anyMatch(article -> article.getId().toString().equals(articleId));
@@ -125,7 +115,6 @@ public class TestDataLoaderService {
     private List<NewsArticle> createSampleArticles() {
         List<NewsArticle> articles = new ArrayList<>();
         
-        // Sample locations for news articles in India
         double[][] locations = {
             {28.613939, 77.209021}, 
             {19.075983, 72.877655}, 
@@ -172,9 +161,8 @@ public class TestDataLoaderService {
     }
 
     private void generateUserEvents(List<NewsArticle> articles) {
-        logger.info("Starting user event generation...");
+        logger.info("Generating user events for {} articles", articles.size());
         
-        // Sample user locations across India
         double[][] userLocations = {
             {19.115983, 72.887655},
             {28.623939, 77.219021},
@@ -188,12 +176,10 @@ public class TestDataLoaderService {
             {18.520430, 73.856744} 
         };
 
-        // Generate events
         for (int i = 0; i < articles.size(); i++) {
             NewsArticle article = articles.get(i);
+            int numEvents = 20 + random.nextInt(30);
             
-            // Generate multiple events for each article with more events for articles near their locations
-            int numEvents = 20 + random.nextInt(30); 
             for (int j = 0; j < numEvents; j++) {
                 UserEvent event = new UserEvent();
                 event.setArticleId(article.getId());
@@ -208,27 +194,13 @@ public class TestDataLoaderService {
                 event.setLatitude(userLocations[locationIndex][0]);
                 event.setLongitude(userLocations[locationIndex][1]);
                 
-                // Set random event type with weighted distribution
-                int eventTypeRoll = random.nextInt(10);
-                if (eventTypeRoll < 5) { 
-                    event.setEventType(UserEvent.EventType.VIEW);
-                } else if (eventTypeRoll < 8) { 
-                    event.setEventType(UserEvent.EventType.CLICK);
-                } else { 
-                    event.setEventType(UserEvent.EventType.SHARE);
-                }
+                event.setEventType(generateRandomEventType());
+                event.setTimestamp(generateRecentTimestamp());
                 
-                // Events within the last hour, with more recent events being more likely
-                int minutesAgo = (int) (random.nextDouble() * random.nextDouble() * 60);
-                event.setTimestamp(LocalDateTime.now().minusMinutes(minutesAgo));
-                
-                // Send event to Kafka
                 kafkaTemplate.send("user_events", event);
                 
-                // Using batching
                 if (j > 0 && j % 50 == 0) {
                     try {
-                        // Brief pause after each batch of 50 events
                         Thread.sleep(100);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
@@ -237,6 +209,18 @@ public class TestDataLoaderService {
                 }
             }
         }
+    }
+
+    private UserEvent.EventType generateRandomEventType() {
+        int roll = random.nextInt(10);
+        if (roll < 5) return UserEvent.EventType.VIEW;
+        if (roll < 8) return UserEvent.EventType.CLICK;
+        return UserEvent.EventType.SHARE;
+    }
+
+    private LocalDateTime generateRecentTimestamp() {
+        int minutesAgo = (int) (random.nextDouble() * random.nextDouble() * 60);
+        return LocalDateTime.now().minusMinutes(minutesAgo);
     }
 
     public long getArticleCount() {
@@ -250,8 +234,7 @@ public class TestDataLoaderService {
             {"Delhi", "28.613939", "77.209021"},
             {"Chennai", "13.082680", "80.270718"},
             {"Hyderabad", "17.385044", "78.486671"},
-            {"Bangalore", "12.971599", "77.594563"},
-            {"Central India", "21.754075", "80.560129"}
+            {"Bangalore", "12.971599", "77.594563"}
         };
 
         for (String[] city : cities) {
@@ -261,10 +244,9 @@ public class TestDataLoaderService {
                 5
             );
             List<String> trending = redisService.getTrendingArticles(geoHash, 5);
-            if (!trending.isEmpty()) {
-                status.add(String.format("%s (%d articles)", city[0], trending.size()));
-            }
+            status.add(String.format("%s: %d trending articles", city[0], trending.size()));
         }
+
         return status;
     }
 

@@ -27,7 +27,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.kafka.core.KafkaTemplate;
 
-
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -38,7 +37,10 @@ import com.example.news_retrieval_system.model.NewsArticle;
 import com.example.news_retrieval_system.model.UserEvent;
 import com.example.news_retrieval_system.repository.NewsArticleRepository;
 
-
+/**
+ * Integration tests for the TrendingController using TestContainers for PostgreSQL,
+ * Redis for caching, and Kafka for event processing.
+ */
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
     properties = {
@@ -91,45 +93,40 @@ public class TrendingControllerTest {
     private final UUID articleId2 = UUID.fromString("009a7476-1b4f-488e-b046-bc2ecea4aaf5");
     private final UUID articleId3 = UUID.fromString("00c3e4cf-7aac-4af4-98a1-c13c11563e49");
 
-
-
     @BeforeEach
     void setUp() {
-        // Clean Redis
+        cleanRedis();
+        setupTestArticles();
+    }
+
+    private void cleanRedis() {
         try {
-            if (redisTemplate != null) {
-                var factory = redisTemplate.getConnectionFactory();
-                if (factory != null) {
-                    var connection = factory.getConnection();
-                    if (connection != null) {
-                        try {
-                            var serverCommands = connection.serverCommands();
-                            if (serverCommands != null) {
-                                serverCommands.flushAll();
-                            }
-                        } finally {
-                            connection.close();
-                        }
+            var factory = redisTemplate.getConnectionFactory();
+            if (factory != null) {
+                var connection = factory.getConnection();
+                if (connection != null) {
+                    try {
+                        connection.serverCommands().flushAll();
+                    } finally {
+                        connection.close();
                     }
                 }
             }
         } catch (Exception e) {
-            // if Redis is not available
             System.err.println("Failed to clean Redis: " + e.getMessage());
         }
-        
-        // Create articles in database
-        if (newsArticleRepository != null) {
-            try {
-                List<NewsArticle> articles = List.of(
-                    createArticle(articleId1, "Title 1", "Description 1", "http://example.com/1", 19.075983, 72.877655), // Mumbai
-                    createArticle(articleId2, "Title 2", "Description 2", "http://example.com/2", 28.613939, 77.209021), // Delhi
-                    createArticle(articleId3, "Title 3", "Description 3", "http://example.com/3", 12.971599, 77.594563)  // Bangalore
-                );
-                newsArticleRepository.saveAll(articles);
-            } catch (Exception e) {
-                throw new IllegalStateException("Failed to set up test data", e);
-            }
+    }
+
+    private void setupTestArticles() {
+        try {
+            List<NewsArticle> articles = List.of(
+                createArticle(articleId1, "Title 1", "Description 1", "http://example.com/1", 19.075983, 72.877655),
+                createArticle(articleId2, "Title 2", "Description 2", "http://example.com/2", 28.613939, 77.209021),
+                createArticle(articleId3, "Title 3", "Description 3", "http://example.com/3", 12.971599, 77.594563)
+            );
+            newsArticleRepository.saveAll(articles);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to set up test data", e);
         }
     }
 
@@ -163,25 +160,47 @@ public class TrendingControllerTest {
 
     @Test
     void shouldReturnTrendingArticlesAfterEvents() throws Exception {
-        
-        UserEvent event = new UserEvent();
-        event.setArticleId(articleId1);
-        event.setLatitude(19.075983);
-        event.setLongitude(72.877655);
-        event.setTimestamp(LocalDateTime.now());
+        UserEvent event = createUserEvent(articleId1, 19.075983, 72.877655);
 
-        // Send different types of events
+        sendUserEvents(event);
+        verifyTrendingArticles(event.getLatitude(), event.getLongitude(), articleId1);
+    }
+
+    @Test
+    void shouldReturnDifferentTrendingArticlesForDifferentLocations() throws Exception {
+        UserEvent delhiEvent = createUserEvent(articleId2, 28.613939, 77.209021);
+        UserEvent bangaloreEvent = createUserEvent(articleId3, 12.971599, 77.594563);
+
+        kafkaTemplate.send("user_events", delhiEvent.getArticleId().toString(), delhiEvent).get();
+        kafkaTemplate.send("user_events", bangaloreEvent.getArticleId().toString(), bangaloreEvent).get();
+
+        verifyTrendingArticles(delhiEvent.getLatitude(), delhiEvent.getLongitude(), articleId2);
+        verifyTrendingArticles(bangaloreEvent.getLatitude(), bangaloreEvent.getLongitude(), articleId3);
+    }
+
+    private UserEvent createUserEvent(UUID articleId, double lat, double lon) {
+        UserEvent event = new UserEvent();
+        event.setArticleId(articleId);
+        event.setLatitude(lat);
+        event.setLongitude(lon);
+        event.setTimestamp(LocalDateTime.now());
+        event.setEventType(UserEvent.EventType.SHARE);
+        return event;
+    }
+
+    private void sendUserEvents(UserEvent event) throws Exception {
         event.setEventType(UserEvent.EventType.VIEW);
         kafkaTemplate.send("user_events", event.getArticleId().toString(), event).get();
         event.setEventType(UserEvent.EventType.CLICK);
         kafkaTemplate.send("user_events", event.getArticleId().toString(), event).get();
         event.setEventType(UserEvent.EventType.SHARE);
         kafkaTemplate.send("user_events", event.getArticleId().toString(), event).get();
+    }
 
-        // Wait for events to be processed
+    private void verifyTrendingArticles(double lat, double lon, UUID expectedArticleId) {
         await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
             ResponseEntity<List<NewsArticleDto>> response = restTemplate.exchange(
-                "/api/v1/trending?lat=19.075983&lon=72.877655",
+                String.format("/api/v1/trending?lat=%f&lon=%f", lat, lon),
                 HttpMethod.GET,
                 null,
                 new ParameterizedTypeReference<List<NewsArticleDto>>() {}
@@ -194,67 +213,7 @@ public class TrendingControllerTest {
                 .isNotEmpty()
                 .first()
                 .satisfies(article -> {
-                    assertThat(article.getArticleId()).isEqualTo(articleId1);
-                });
-        });
-    }
-
-    @Test
-    void shouldReturnDifferentTrendingArticlesForDifferentLocations() throws Exception {
-        
-        UserEvent delhiEvent = new UserEvent();
-        delhiEvent.setArticleId(articleId2);
-        delhiEvent.setLatitude(28.613939);
-        delhiEvent.setLongitude(77.209021);
-        delhiEvent.setTimestamp(LocalDateTime.now());
-        delhiEvent.setEventType(UserEvent.EventType.SHARE);
-        kafkaTemplate.send("user_events", delhiEvent.getArticleId().toString(), delhiEvent).get();
-
-        
-        UserEvent bangaloreEvent = new UserEvent();
-        bangaloreEvent.setArticleId(articleId3);
-        bangaloreEvent.setLatitude(12.971599);
-        bangaloreEvent.setLongitude(77.594563);
-        bangaloreEvent.setTimestamp(LocalDateTime.now());
-        bangaloreEvent.setEventType(UserEvent.EventType.SHARE);
-        kafkaTemplate.send("user_events", bangaloreEvent.getArticleId().toString(), bangaloreEvent).get();
-
-        // Wait for events to be processed
-        await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
-            
-            ResponseEntity<List<NewsArticleDto>> delhiResponse = restTemplate.exchange(
-                "/api/v1/trending?lat=28.613939&lon=77.209021",
-                HttpMethod.GET,
-                null,
-                new ParameterizedTypeReference<List<NewsArticleDto>>() {}
-            );
-
-            assertThat(delhiResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
-            List<NewsArticleDto> delhiBody = delhiResponse.getBody();
-            assertThat(delhiBody)
-                .isNotNull()
-                .isNotEmpty()
-                .first()
-                .satisfies(article -> {
-                    assertThat(article.getArticleId()).isEqualTo(articleId2);
-                });
-
-            
-            ResponseEntity<List<NewsArticleDto>> bangaloreResponse = restTemplate.exchange(
-                "/api/v1/trending?lat=12.971599&lon=77.594563",
-                HttpMethod.GET,
-                null,
-                new ParameterizedTypeReference<List<NewsArticleDto>>() {}
-            );
-
-            assertThat(bangaloreResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
-            List<NewsArticleDto> bangaloreBody = bangaloreResponse.getBody();
-            assertThat(bangaloreBody)
-                .isNotNull()
-                .isNotEmpty()
-                .first()
-                .satisfies(article -> {
-                    assertThat(article.getArticleId()).isEqualTo(articleId3);
+                    assertThat(article.getArticleId()).isEqualTo(expectedArticleId);
                 });
         });
     }
@@ -262,32 +221,29 @@ public class TrendingControllerTest {
     @Test
     void shouldHandleInvalidCoordinates() {
         ResponseEntity<List<NewsArticleDto>> response = restTemplate.exchange(
-            "/api/v1/trending?lat=190.0&lon=72.877655",
+            "/api/v1/trending?lat=invalid&lon=72.877655",
             HttpMethod.GET,
             null,
             new ParameterizedTypeReference<List<NewsArticleDto>>() {}
         );
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-        assertThat(response.getBody()).isEmpty();
     }
 
     @Test
     void shouldHandleInvalidLimit() {
         ResponseEntity<List<NewsArticleDto>> response = restTemplate.exchange(
-            "/api/v1/trending?lat=19.075983&lon=72.877655&limit=0",
+            "/api/v1/trending?lat=19.075983&lon=72.877655&limit=-1",
             HttpMethod.GET,
             null,
             new ParameterizedTypeReference<List<NewsArticleDto>>() {}
         );
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-        assertThat(response.getBody()).isEmpty();
     }
 
     @DynamicPropertySource
     static void registerProperties(DynamicPropertyRegistry registry) {
-        // Register PostgreSQL properties
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);

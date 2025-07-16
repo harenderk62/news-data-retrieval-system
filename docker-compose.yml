@@ -1,4 +1,3 @@
-version: '3.8'
 services:
   postgres:
     image: postgis/postgis:15-3.4
@@ -9,10 +8,26 @@ services:
     ports: ['5432:5432']
     volumes:
       - ./postgres-init/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U news -d newsdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     ports: ['6379:6379']
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   zookeeper:
     image: zookeeper:latest
@@ -21,47 +36,54 @@ services:
       - "8081:8080"
     environment:
       ZOO_4LW_COMMANDS_WHITELIST: "*"
-      JVMFLAGS: "-Dzookeeper.admin.serverPort=8080"
+      JVMFLAGS: "-Dzookeeper.admin.serverPort=8080 -Xmx512M -Xms256M"
     volumes:
       - zookeeper_data:/bitnami/zookeeper
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   kafka:
     image: bitnami/kafka:latest
     environment:
       # --- KRaft settings ---
-      # Sets the roles for this node as both a broker and a controller.
-      - KAFKA_CFG_PROCESS_ROLES=broker,controller
-      # Assigns a unique ID to this Kafka node.
-      - KAFKA_CFG_NODE_ID=1
-      # Defines the controller quorum, pointing to itself for a single-node setup.
-      # The hostname 'kafka' must match this service's name.
-      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      KAFKA_CFG_PROCESS_ROLES: broker,controller
+      KAFKA_CFG_NODE_ID: 1
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       
       # --- Listener settings ---
-      # Configures the listeners for client connections (PLAINTEXT) and controller communication.
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://0.0.0.0:9092,PLAINTEXT_INTERNAL://0.0.0.0:29092,CONTROLLER://:9093
-      # Advertises the address that clients can use to connect to Kafka from within the Docker network.
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
-      # Maps listener names to security protocols.
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
-      # Specifies the name of the listener used for controller traffic.
-      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      KAFKA_CFG_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_INTERNAL://0.0.0.0:29092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      # --- Performance settings ---
+      KAFKA_HEAP_OPTS: "-Xmx1G -Xms512M"
+      KAFKA_JVM_PERFORMANCE_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=20"
 
       # --- General settings ---
-      # Allows the use of PLAINTEXT, which is not recommended for production.
-      - ALLOW_PLAINTEXT_LISTENER=yes
-      # Enables debug logging for more detailed output.
-#      - BITNAMI_DEBUG=true
+      ALLOW_PLAINTEXT_LISTENER: "yes"
     ports:
       - "9092:9092"
     depends_on:
       - zookeeper
     volumes:
       - kafka_data:/bitnami/kafka
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
 
   news-service:
-    build: ./news-retrieval-system
-    restart: on-failure
+    build: 
+      context: ./news-retrieval-system
+      dockerfile: Dockerfile
+    restart: unless-stopped
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/newsdb
       SPRING_DATASOURCE_USERNAME: news
@@ -69,19 +91,39 @@ services:
       LLM_SERVICE_URL: http://llm-service:8000
       SPRING_DATA_REDIS_HOST: redis
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      JAVA_OPTS: "-Xmx512m -Xms256m"
     ports: ['8080:8080']
     volumes:
       - ./news-retrieval-system:/app
     command: ["sh", "-c", "mvn spring-boot:run"]
-    depends_on: [postgres, redis, kafka]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   llm-service:
-    build: ./llm-service
+    build: 
+      context: ./llm-service
+      dockerfile: Dockerfile
     volumes:
       - ./llm-service:/app
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
     ports: ['8000:8000']
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
   
   pgadmin:
     image: dpage/pgadmin4:7.0
@@ -91,11 +133,13 @@ services:
       PGADMIN_DEFAULT_EMAIL: admin@admin.com
       PGADMIN_DEFAULT_PASSWORD: admin
     ports:
-      - "5050:80"       # host:container
+      - "5050:80"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     volumes:
       - pgadmin_data:/var/lib/pgadmin
+    restart: unless-stopped
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -103,14 +147,19 @@ services:
     ports:
       - "8082:8080"
     environment:
-      - KAFKA_CLUSTERS_0_NAME=local
-      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:29092
-      - KAFKA_CLUSTERS_0_ZOOKEEPER=zookeeper:2181
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
     depends_on:
-      - kafka
-      - zookeeper
+      kafka:
+        condition: service_healthy
+      zookeeper:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
+  postgres_data:
+  redis_data:
   zookeeper_data:
   kafka_data:
   pgadmin_data:

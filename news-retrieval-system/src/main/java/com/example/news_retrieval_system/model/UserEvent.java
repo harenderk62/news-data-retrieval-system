@@ -24,7 +24,6 @@ public class UserEvent {
         this.longitude = longitude;
     }
 
-    // Getters and Setters
     public UUID getArticleId() {
         return articleId;
     }

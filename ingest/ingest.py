@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+"""
+News article data ingestion script that loads articles from JSON files into PostgreSQL.
+"""
+
 import json
 import os
 import glob
@@ -10,13 +14,9 @@ from psycopg2.extras import execute_values
 from psycopg2.extensions import connection, cursor
 from dotenv import load_dotenv
 
-# Configure structured logging
 logger = structlog.get_logger()
-
-# Load environment variables from .env file
 load_dotenv()
 
-# Configuration
 DB_CONFIG = {
     "dbname": os.getenv("DB_NAME", "newsdb"),
     "user": os.getenv("DB_USER", "news"),
@@ -25,9 +25,9 @@ DB_CONFIG = {
     "port": int(os.getenv("DB_PORT", "5432")),
 }
 
-# Constants
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.normpath(os.path.join(HERE, os.pardir, "data"))
+
 
 def create_table(cur: cursor) -> None:
     """Create the news_articles table if it doesn't exist."""
@@ -47,9 +47,11 @@ def create_table(cur: cursor) -> None:
     );
     """)
 
+
 @backoff.on_exception(backoff.expo, psycopg2.Error, max_tries=3)
 def get_db_connection() -> connection:
     return psycopg2.connect(**DB_CONFIG)
+
 
 def process_articles(articles: List[Dict[str, Any]]) -> List[tuple]:
     rows = []
@@ -73,6 +75,7 @@ def process_articles(articles: List[Dict[str, Any]]) -> List[tuple]:
                         article_id=article.get("id", "unknown"),
                         error=str(e))
     return rows
+
 
 def main():
     try:
@@ -126,7 +129,8 @@ def main():
 
         # Final summary
         cur.execute("SELECT COUNT(*) FROM news_articles;")
-        count = cur.fetchone()[0]
+        result = cur.fetchone()
+        count = result[0] if result else 0
         logger.info("Ingestion complete",
                    total_inserted=total_inserted,
                    total_rows=count)
@@ -139,6 +143,7 @@ def main():
             cur.close()
         if 'conn' in locals():
             conn.close()
+
 
 if __name__ == "__main__":
     main()

@@ -10,7 +10,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.Data;
-
+import com.fasterxml.jackson.annotation.JsonFormat;
 
 @Entity
 @Table(name = "news_articles") 
@@ -28,6 +28,8 @@ public class NewsArticle implements Serializable {
 
     private String url;
 
+    @Column(name = "publication_date")
+    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime publicationDate;
 
     private String sourceName;

@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.UUID;
 
 import com.example.news_retrieval_system.model.NewsArticle;
+import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -19,7 +21,11 @@ public class NewsArticleDto implements Serializable {
     private String title;
     private String description;
     private String url;
+    
+    @JsonProperty("publication_date")
+    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime publicationDate;
+    
     private String sourceName;
     private List<String> category;
     private double relevanceScore;
@@ -27,7 +33,6 @@ public class NewsArticleDto implements Serializable {
     private double latitude;
     private double longitude;
 
-    
     public NewsArticleDto(NewsArticle article, String summary) {
         this.articleId = article.getId(); 
         this.title = article.getTitle();

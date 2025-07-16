@@ -32,5 +32,46 @@ public interface NewsArticleRepository extends JpaRepository<NewsArticle, UUID> 
     // For "nearby" intent - uses the Haversine formula for distance calculation
     @Query(value = "SELECT *, (6371 * acos(cos(radians(:lat)) * cos(radians(latitude)) * cos(radians(longitude) - radians(:lon)) + sin(radians(:lat)) * sin(radians(latitude)))) AS distance FROM news_articles ORDER BY distance", nativeQuery = true)
     List<NewsArticle> findNearbyArticles(@Param("lat") double lat, @Param("lon") double lon, Pageable pageable);
+
+    /**
+     * Advanced search that combines geographical proximity, recency, and relevance score.
+     * Only considers articles from the last 48 hours within the specified maximum distance.
+     * Scoring factors:
+     * - Distance: Higher weight for articles within 10km
+     * - Time: Full weight for articles < 24h old, half weight for older ones
+     * - Content: Uses the article's relevance score
+     */
+    // Fallback query - combines location relevance with recency
+    @Query(value = """
+        WITH location_score AS (
+            SELECT *,
+                (6371 * acos(cos(radians(:lat)) * cos(radians(latitude)) * 
+                cos(radians(longitude) - radians(:lon)) + sin(radians(:lat)) * 
+                sin(radians(latitude)))) AS distance,
+                EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - publication_date))/3600 AS hours_old
+            FROM news_articles
+            WHERE publication_date >= CURRENT_TIMESTAMP - INTERVAL '48 hours'
+        )
+        SELECT *
+        FROM location_score
+        WHERE distance <= :maxDistanceKm
+        ORDER BY (
+            CASE 
+                WHEN distance < 10 THEN 1.0
+                ELSE 1.0 / (distance / 10.0)
+            END * 
+            CASE 
+                WHEN hours_old < 24 THEN 1.0
+                ELSE 0.5
+            END * 
+            relevance_score
+        ) DESC
+        """, nativeQuery = true)
+    List<NewsArticle> findFallbackArticles(
+        @Param("lat") double lat, 
+        @Param("lon") double lon, 
+        @Param("maxDistanceKm") double maxDistanceKm,
+        Pageable pageable
+    );
 }
  

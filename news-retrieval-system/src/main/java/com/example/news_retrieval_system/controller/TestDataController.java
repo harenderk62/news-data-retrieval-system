@@ -46,16 +46,13 @@ public class TestDataController {
     public ResponseEntity<Map<String, Object>> getTestDataStatus() {
         try {
             Map<String, Object> status = new HashMap<>();
-            
-            // Get article count from TestDataLoaderService
+                       
             long articleCount = testDataLoaderService.getArticleCount();
             status.put("articleCount", articleCount);
             
-            // Get trending status
             List<String> trendingStatus = testDataLoaderService.getTrendingStatus();
             status.put("trendingLocations", trendingStatus);
             
-            // Get last generation timestamp if available
             Optional<LocalDateTime> lastGenerated = testDataLoaderService.getLastGeneratedTime();
             lastGenerated.ifPresent(time -> status.put("lastGenerated", time.toString()));
 

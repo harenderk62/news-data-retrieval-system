@@ -1,22 +1,21 @@
 import os
-import google.generativeai as genai
+import json
+from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-import json
+import google.generativeai as genai
 
 
 api_key = os.getenv("GEMINI_API_KEY")
-
 if not api_key:
     raise RuntimeError("GEMINI_API_KEY is not set in the environment")
 
 genai.configure(api_key=api_key)
 
+
 class QueryRequest(BaseModel):
-    """Defines the structure for an incoming query."""
     query: str = Field(..., description="The user's news query.")
 
-from typing import Any
 
 class LLMResponse(BaseModel):
     """
@@ -26,15 +25,12 @@ class LLMResponse(BaseModel):
     intents: list[str] = Field(description="List of identified intents (e.g., 'nearby', 'category', 'source', 'trending', 'search').")
 
 class SummarizeRequest(BaseModel):
-    """Defines the structure for a summarization request."""
     text: str = Field(..., description="The text content to be summarized.")
 
+
 class SummaryResponse(BaseModel):
-    """Defines the structure for a summarization response."""
     summary: str = Field(description="The generated summary of the text.")
 
-
-# --- FastAPI Application Setup ---
 
 app = FastAPI(
     title="LLM News Query and Summary Processor",
@@ -42,8 +38,7 @@ app = FastAPI(
 )
 
 
-# Prompt for Query Analysis
-query_analysis_prompt = """
+QUERY_ANALYSIS_PROMPT = """
 You are an intelligent assistant for a news retrieval system. Your task is to analyze a user's query and extract key information in a structured JSON format.
 
 Based on the user's query, you must identify:
@@ -98,28 +93,22 @@ Here are some examples:
     "entities": {"score": 0.8},
     "intents": ["score"]
   }
-
 """
 
-# Prompt for Summarization
-summarization_prompt = """
+SUMMARIZATION_PROMPT = """
 You are an expert summarizer. Your task is to take the given text and create a concise, clear, and accurate summary.
 The summary should capture the main points and key information of the original text without adding any new information or personal opinions.
 """
 
-
-# Model for query analysis
 query_model = genai.GenerativeModel(
     model_name="gemini-2.0-flash",
-    system_instruction=query_analysis_prompt
+    system_instruction=QUERY_ANALYSIS_PROMPT
 )
 
-# Model for summarization
 summary_model = genai.GenerativeModel(
     model_name="gemini-2.0-flash",
-    system_instruction=summarization_prompt
+    system_instruction=SUMMARIZATION_PROMPT
 )
-
 
 
 @app.post("/process-query")
@@ -129,12 +118,10 @@ async def process_query(request: QueryRequest):
     and returns the extracted entities and intent in a structured format.
     """
     try:
-        # Generate content using the model
         response = query_model.generate_content(
             request.query,
             generation_config={"response_mime_type": "application/json"}
         )
-
         response_json = json.loads(response.text)
         
         llm_response = LLMResponse(**response_json)
@@ -148,15 +135,14 @@ async def process_query(request: QueryRequest):
         print(f"An error occurred during query processing: {e}")
         raise HTTPException(status_code=500, detail="Failed to process the query with the LLM.")
 
+
 @app.post("/summarize/", response_model=SummaryResponse)
 async def summarize_text(request: SummarizeRequest):
     """
     Receives text content and returns a generated summary.
     """
     try:
-        # Generate a summary
         response = summary_model.generate_content(request.text)
-        
         return SummaryResponse(summary=response.text)
 
     except Exception as e:
