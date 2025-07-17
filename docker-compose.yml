@@ -129,7 +129,7 @@ services:
     image: dpage/pgadmin4:7.0
     container_name: pgadmin
     environment:
-      # these are the UI login creds
+      # these are the login creds
       PGADMIN_DEFAULT_EMAIL: admin@admin.com
       PGADMIN_DEFAULT_PASSWORD: admin
     ports:
