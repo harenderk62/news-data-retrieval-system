@@ -71,6 +71,28 @@ The system consists of several microservices:
 - **AI/ML**:
   - Google Gemini for NLP tasks
 
+## sequenceDiagram
+
+    participant C as Client
+    participant NS as News Service
+    participant LLM as LLM Service
+    participant DB as PostgreSQL
+    participant R as Redis
+    participant K as Kafka
+
+    C->>NS: GET /api/v1/news/search?query=text
+    NS->>LLM: POST /process-query
+    LLM-->>NS: Intent & Entities
+    NS->>DB: Query Articles
+    DB-->>NS: Raw Articles
+    NS->>LLM: POST /summarize
+    LLM-->>NS: Article Summaries
+    NS->>K: Publish User Event
+    NS-->>C: Enriched Articles
+    
+    Note over K,R: Async Processing
+    K->>R: Update Trending Scores
+
 ## Setup and Installation
 
 ### Prerequisites
@@ -141,7 +163,7 @@ GET /api/v1/news/search?query={query}
 GET /api/v1/trending?lat={latitude}&lon={longitude}&radius={radiusKm}&limit={limit}
 ```
 - Returns trending articles based on location
-- Supports radius-based search
+- Supports radius-based search (default 100kms)
 - Optional limit parameter (default: 5)
 
 #### 3. Record User Event
@@ -210,20 +232,6 @@ cd ingest
 pip install -r requirements.txt
 ```
 
-### Running Tests
-```bash
-# News Retrieval Service
-cd news-retrieval-system
-mvn test
-
-# LLM Service
-cd llm-service
-pytest
-
-# Ingest Service
-cd ingest
-pytest
-```
 
 ## Monitoring and Maintenance
 
@@ -243,26 +251,3 @@ pytest
 - Kafka for asynchronous event processing
 - Rate limiting on critical endpoints
 
-## Security
-
-### API Security
-- Rate limiting implemented
-- Input validation across all endpoints
-- Secure environment variable handling
-
-### Data Security
-- PostgreSQL user authentication
-- Redis password protection (optional)
-- Kafka security (configurable)
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## License
-
-[Add License Information] 

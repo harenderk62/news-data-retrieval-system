@@ -1,0 +1,64 @@
+# News Data Retrieval System API Endpoints
+# This file contains all the CURL commands for testing the API endpoints
+
+
+
+# 1. Get Trending News
+# Returns trending news articles based on geographical location
+# Parameters:
+
+#   - lat: Latitude (required)
+#   - lon: Longitude (required)
+#   - limit: Maximum number of results (optional, default=10)
+curl --location 'http://localhost:8080/api/v1/trending?lat=19.075983&lon=72.877655&limit=10'
+
+
+
+# 2. Query News Articles
+# Search for news articles based on a query string
+# Parameters:
+#   - q: Search query (required, URL encoded)
+
+curl --location 'http://localhost:8080/api/v1/news/query?q=Elon%20Musk%20Twitter%20acquisition%20latest%20developments%20near%20Palo%20Alto'
+
+
+
+# 3. Record User Event
+# Track user interactions with news articles
+# Method: POST
+# Body: JSON with user event details
+
+curl --location 'http://localhost:8080/api/v1/events' \
+--header 'Content-Type: application/json' \
+--data '{
+    "articleId": "11880b7b-4cac-49e7-8621-ff984af981e1",
+    "eventType": "VIEW",
+    "latitude": 19.075983,
+    "longitude": 72.877655
+}'
+
+
+
+# 4. Test Status
+# Check test data status
+# Method: GET
+
+curl --location --request GET 'http://localhost:8080/api/v1/test/status' \
+--header 'Content-Type: application/json' \
+--data '{
+    "userId": "user123",
+    "articleId": "19aaddc0-7508-4659-9c32-2216107f8604",
+    "eventType": "click",
+    "latitude": 40.7128,
+    "longitude": -74.0060
+}'
+
+
+
+# 5. Generate Test Data
+# Generate sample test data
+# Method: POST
+
+curl --location --request POST 'http://localhost:8080/api/v1/test/generate' \
+--header 'Content-Type: application/json' \
+--data ''
